@@ -721,7 +721,7 @@ def distributed_initialize_server_directory(client, dir_path):
         # Let's group the workers by host_name
         host_worker_dict = {}
         for worker, worker_info in all_items:
-            host_name = worker.split(":")[0]
+            host_name = re.findall(r"[0-9]+(?:\.[0-9]+){3}", worker)[0]
             if host_name not in host_worker_dict.keys():
                 host_worker_dict[host_name] = [worker]
             else:
@@ -756,7 +756,7 @@ def distributed_initialize_server_directory(client, dir_path):
         host_worker_dict = {}
         for worker_key, cwd in zip(all_items, current_working_dirs):
             worker = worker_key[0]
-            host_name = worker.split(":")[0]
+            host_name = re.findall(r"[0-9]+(?:\.[0-9]+){3}", worker)[0]
             if host_name not in host_worker_dict.keys():
                 host_worker_dict[host_name] = {cwd: [worker]}
             else:
@@ -1538,29 +1538,29 @@ class BlazingContext(object):
 
     def get_free_memory(self):
         """
-            This function returns a dictionary which contains as
-            key the gpuID and as value the free memory (bytes)
+        This function returns a dictionary which contains as
+        key the gpuID and as value the free memory (bytes)
 
-            Example
-            --------
-            # single-GPU
-            >>> from blazingsql import BlazingContext
-            >>> bc = BlazingContext()
-            >>> free_mem = bc.get_free_memory()
-            >>> print(free_mem)
-                    {0: 4234220154}
+        Example
+        --------
+        # single-GPU
+        >>> from blazingsql import BlazingContext
+        >>> bc = BlazingContext()
+        >>> free_mem = bc.get_free_memory()
+        >>> print(free_mem)
+                {0: 4234220154}
 
-            # multi-GPU (4 GPUs):
-            >>> from blazingsql import BlazingContext
-            >>> from dask_cuda import LocalCUDACluster
-            >>> from dask.distributed import Client
-            >>> cluster = LocalCUDACluster()
-            >>> client = Client(cluster)
-            >>> bc = BlazingContext(dask_client=client, network_interface='lo')
-            >>> free_mem = bc.get_free_memory()
-            >>> print(free_mem)
-                    {0: 4234220154, 1: 4104210987,
-                     2: 4197720291, 3: 3934320116}
+        # multi-GPU (4 GPUs):
+        >>> from blazingsql import BlazingContext
+        >>> from dask_cuda import LocalCUDACluster
+        >>> from dask.distributed import Client
+        >>> cluster = LocalCUDACluster()
+        >>> client = Client(cluster)
+        >>> bc = BlazingContext(dask_client=client, network_interface='lo')
+        >>> free_mem = bc.get_free_memory()
+        >>> print(free_mem)
+                {0: 4234220154, 1: 4104210987,
+                 2: 4197720291, 3: 3934320116}
         """
         if self.dask_client:
             dask_futures = []
@@ -2498,7 +2498,9 @@ class BlazingContext(object):
                     self.dask_client.submit(
                         collectPartitionsRunQuery,
                         masterIndex,
-                        [self.nodes[0],],
+                        [
+                            self.nodes[0],
+                        ],
                         nodeTableList[0],
                         table_scans,
                         fileTypes,
