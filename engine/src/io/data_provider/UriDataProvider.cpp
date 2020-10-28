@@ -194,7 +194,7 @@ data_handle uri_data_provider::get_next(bool open_file) {
 
 				auto logger = spdlog::get("batch_logger");
 				if(logger != nullptr) {
-					logger->warn("|||{info}|||||", "info"_a="Folder is empty");
+					logger->warn("|||{info}|||||", "info"_a="Folder is empty: " + target_uri.getPath().toString());
 				}
 
 				data_handle empty_handle;
