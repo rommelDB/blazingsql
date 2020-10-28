@@ -109,6 +109,10 @@ void data_loader::get_schema(Schema & schema, std::vector<std::pair<std::string,
 			if (schema.get_num_columns() > 0){
 				got_schema = true;
 				schema.add_file(handle.uri.toString(true));
+			}else{
+				auto logger = spdlog::get("batch_logger");
+				logger->warn("|||{info}|||||",
+						"info"_a="In data_loader::get_schema not found data in " + handle.uri.toString(true));
 			}
 		}
 	}
