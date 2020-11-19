@@ -148,7 +148,7 @@ DataSourceSequence::DataSourceSequence(ral::io::data_loader &loader, ral::io::Sc
             int file_idx = 0;
             while (provider->has_next()) {
                 auto data_handle = provider->get_next();
-                int64_t file_size = data_handle.fileHandle->GetSize().ValueOrDie();
+                int64_t file_size = data_handle.file_handle->GetSize().ValueOrDie();
                 size_t num_chunks = (file_size + max_bytes_chuck_size - 1) / max_bytes_chuck_size;
                 std::vector<int> file_row_groups(num_chunks);
                 std::iota(file_row_groups.begin(), file_row_groups.end(), 0);
@@ -185,10 +185,10 @@ RecordBatch DataSourceSequence::next() {
     }
 
     if(is_gdf_parser){
-        auto ret = loader.load_batch(context.get(), projections, schema, ral::io::data_handle(), 0, {static_cast<cudf::size_type>(batch_index)} );
+//			auto ret = loader.load_batch(context.get(), projections, schema, ral::io::data_handle(), 0, {static_cast<cudf::size_type>(batch_index)} );
         batch_index++;
 
-        return std::move(ret);
+//			return std::move(ret);
     }
 
     auto local_cur_data_handle = current_data_handle;
@@ -218,7 +218,7 @@ RecordBatch DataSourceSequence::next() {
     lock.unlock();
 
     try {
-        return loader.load_batch(context.get(), projections, schema, local_cur_data_handle, local_cur_file_index, local_row_group);
+//			return loader.load_batch(context.get(), projections, schema, local_cur_data_handle, local_cur_file_index, local_row_group);
     }	catch(const std::exception& e) {
         auto logger = spdlog::get("batch_logger");
         logger->error("{query_id}|||{info}|||||",
@@ -248,12 +248,42 @@ size_t DataSourceSequence::get_num_batches() {
 
 // BEGIN TableScan
 
-TableScan::TableScan(std::size_t kernel_id, const std::string & queryString, ral::io::data_loader &loader, ral::io::Schema & schema, std::shared_ptr<Context> context, std::shared_ptr<ral::cache::graph> query_graph)
-: kernel(kernel_id, queryString, context, kernel_type::TableScanKernel), input(loader, schema, context)
+TableScan::TableScan(std::size_t kernel_id, const std::string & queryString, std::shared_ptr<ral::io::data_provider> provider, std::shared_ptr<ral::io::data_parser> parser, ral::io::Schema & schema, std::shared_ptr<Context> context, std::shared_ptr<ral::cache::graph> query_graph)
+: kernel(kernel_id, queryString, context, kernel_type::TableScanKernel),schema(schema), provider(provider), parser(parser)
 {
+    size_t n_batches;
+    if(parser->type() == ral::io::DataType::CUDF){
+        n_batches = std::max(provider->get_num_handles(), (size_t)1);
+    } else if (parser->type() == ral::io::DataType::CSV)	{
+        auto csv_parser = static_cast<ral::io::csv_parser*>(parser.get());
+        n_batches = 0;
+        size_t max_bytes_chuck_size = csv_parser->max_bytes_chuck_size();
+        if (max_bytes_chuck_size > 0) {
+            int file_idx = 0;
+            while (provider->has_next()) {
+                auto data_handle = provider->get_next();
+                int64_t file_size = data_handle.file_handle->GetSize().ValueOrDie();
+                size_t num_chunks = (file_size + max_bytes_chuck_size - 1) / max_bytes_chuck_size;
+                std::vector<int> file_row_groups(num_chunks);
+                std::iota(file_row_groups.begin(), file_row_groups.end(), 0);
+                schema.get_rowgroups()[file_idx] = std::move(file_row_groups);
+                n_batches += num_chunks;
+                file_idx++;
+            }
+            provider->reset();
+        } else {
+            n_batches = provider->get_num_handles();
+        }
+    }	else {
+        n_batches = 0;
+        for (auto row_group : schema.get_rowgroups()) {
+            n_batches += std::max(row_group.size(), (size_t)1);
+        }
+    }
+    num_batches = (double)n_batches;
+
     this->query_graph = query_graph;
 }
-
 
 kstatus TableScan::run() {
     CodeTimer timer;
@@ -272,40 +302,39 @@ kstatus TableScan::run() {
         table_scan_kernel_num_threads = 1;
     }
 
+    std::vector<int> projections(schema.get_num_columns());
+    std::iota(projections.begin(), projections.end(), 0);
+
     cudf::size_type current_rows = 0;
-    std::vector<BlazingThread> threads;
-    for (int i = 0; i < table_scan_kernel_num_threads; i++) {
-        threads.push_back(BlazingThread([this, &has_limit, &limit_, &current_rows]() {
-            CodeTimer eventTimer(false);
-
-            std::unique_ptr<ral::frame::BlazingTable> batch;
-            while(batch = input.next()) {
-                eventTimer.start();
-                eventTimer.stop();
-                current_rows += batch->num_rows();
-
-                events_logger->info("{ral_id}|{query_id}|{kernel_id}|{input_num_rows}|{input_num_bytes}|{output_num_rows}|{output_num_bytes}|{event_type}|{timestamp_begin}|{timestamp_end}",
-                                "ral_id"_a=context->getNodeIndex(ral::communication::CommunicationData::getInstance().getSelfNode()),
-                                "query_id"_a=context->getContextToken(),
-                                "kernel_id"_a=this->get_id(),
-                                "input_num_rows"_a=batch->num_rows(),
-                                "input_num_bytes"_a=batch->sizeInBytes(),
-                                "output_num_rows"_a=batch->num_rows(),
-                                "output_num_bytes"_a=batch->sizeInBytes(),
-                                "event_type"_a="compute",
-                                "timestamp_begin"_a=eventTimer.start_time(),
-                                "timestamp_end"_a=eventTimer.end_time());
-
-                this->add_to_output_cache(std::move(batch));
-                
-                if (has_limit && current_rows >= limit_) {
-                    break;
-                }
-            }
-        }));
+    
+    //if its empty we can just add it to the cache without scheduling
+    if (!provider->has_next()) {
+        this->add_to_output_cache(std::move(schema.makeEmptyBlazingTable(projections)));
+        return kstatus::proceed;
     }
-    for (auto &&t : threads) {
-        t.join();
+
+    while(provider->has_next()){
+        //retrieve the file handle but do not open the file
+        //this will allow us to prevent from having too many open file handles by being
+        //able to limit the number of file tasks
+        auto handle = provider->get_next(false);
+        auto file_schema = schema.fileSchema(file_index);
+        auto row_group_ids = schema.get_rowgroup_ids(file_index);
+        //this is the part where we make the task now
+        std::unique_ptr<ral::cache::CacheData> input = 
+            std::make_unique<ral::cache::CacheDataIO>(handle,parser,schema,file_schema,row_group_ids,projections);
+        std::vector<std::unique_ptr<ral::cache::CacheData> > inputs;
+        inputs.push_back(std::move(input));
+        
+        add_task(
+            ral::execution::executor::get_instance()->add_task(
+                std::move(inputs),
+                this->output_.get_cache(std::to_string(this->get_id())),
+                this,std::string("scan")
+            )
+        );
+
+        file_index++;
     }
 
     logger->debug("{query_id}|{step}|{substep}|{info}|{duration}|kernel_id|{kernel_id}||",
@@ -316,13 +345,16 @@ kstatus TableScan::run() {
                                 "duration"_a=timer.elapsed_time(),
                                 "kernel_id"_a=this->get_id());
 
+    std::unique_lock<std::mutex> lock(kernel_mutex);
+    kernel_cv.wait(lock,[this]{
+        return this->tasks.empty();
+    });
     return kstatus::proceed;
 }
 
 std::pair<bool, uint64_t> TableScan::get_estimated_output_num_rows(){
     double rows_so_far = (double)this->output_.total_rows_added();
-    double num_batches = (double)this->input.get_num_batches();
-    double current_batch = (double)this->input.get_batch_index();
+    double current_batch = (double)file_index;
     if (current_batch == 0 || num_batches == 0){
         return std::make_pair(false, 0);
     } else {

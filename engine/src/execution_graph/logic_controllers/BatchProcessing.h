@@ -5,8 +5,9 @@
 #include "taskflow/graph.h"
 #include "io/Schema.h"
 #include "io/DataLoader.h"
-
 #include <execution_graph/logic_controllers/LogicPrimitives.h>
+#include "communication/CommunicationData.h"
+#include "execution_graph/logic_controllers/taskflow/kernel.h"
 
 namespace ral {
 namespace batch {
@@ -192,9 +193,18 @@ public:
 	 * @param context Shared context associated to the running query.
 	 * @param query_graph Shared pointer of the current execution graph.
 	 */
-	TableScan(std::size_t kernel_id, const std::string & queryString, ral::io::data_loader &loader, ral::io::Schema & schema, std::shared_ptr<Context> context, std::shared_ptr<ral::cache::graph> query_graph);
 
-	
+	TableScan(std::size_t kernel_id, const std::string & queryString, std::shared_ptr<ral::io::data_provider> provider, std::shared_ptr<ral::io::data_parser> parser, ral::io::Schema & schema, std::shared_ptr<Context> context, std::shared_ptr<ral::cache::graph> query_graph);
+
+	void do_process(std::vector< std::unique_ptr<ral::frame::BlazingTable> > inputs,
+		std::shared_ptr<ral::cache::CacheMachine> output,
+		cudaStream_t stream, std::string kernel_process_name) override{
+			//for now the output kernel is not using do_process
+			//i believe the output should be a cachemachine itself
+			//obviating this concern
+		output->addToCache(std::move(inputs[0]), std::string(""));
+	}
+
 	/**
 	 * Executes the batch processing.
 	 * Loads the data from their input port, and after processing it,
@@ -210,7 +220,28 @@ public:
 	virtual std::pair<bool, uint64_t> get_estimated_output_num_rows();
 
 private:
-	DataSourceSequence input; /**< Input data source sequence. */
+	std::shared_ptr<ral::io::data_provider> provider;
+	std::shared_ptr<ral::io::data_parser> parser;
+	ral::io::Schema  schema; /**< Table schema associated to the data to be loaded. */ 
+	size_t file_index = 0;
+	double num_batches;
+
+
+// std::shared_ptr<Context> context; /**< Pointer to the shared query context. */
+// 	std::vector<int> projections; /**< List of columns that will be selected if they were previously settled. */
+// 	ral::io::data_loader loader; /**< Data loader responsible for executing the batching load. */
+// 	ral::io::Schema  schema; /**< Table schema associated to the data to be loaded. */
+// 	size_t cur_file_index; /**< Current file index. */
+// 	size_t cur_row_group_index; /**< Current rowgroup index. */
+// 	std::vector<std::vector<int>> all_row_groups;
+// 	std::atomic<size_t> batch_index; /**< Current batch index. */
+// 	size_t n_batches; /**< Number of batches. */
+// 	size_t n_files; /**< Number of files. */
+// 	bool is_empty_data_source; /**< Indicates whether the data source is empty. */
+// 	bool is_gdf_parser; /**< Indicates whether the parser is a gdf one. */
+
+// 	std::mutex mutex_; /**< Mutex for making the loading batch thread-safe. */
+
 };
 
 /**
@@ -341,6 +372,14 @@ public:
 	 */
 	OutputKernel(std::size_t kernel_id, std::shared_ptr<Context> context) : kernel(kernel_id,"OutputKernel", context, kernel_type::OutputKernel) { }
 
+	void do_process(std::vector< std::unique_ptr<ral::frame::BlazingTable> > inputs,
+		std::shared_ptr<ral::cache::CacheMachine> output,
+		cudaStream_t stream, std::string kernel_process_name) override{
+			//for now the output kernel is not using do_process
+			//i believe the output should be a cachemachine itself
+			//obviating this concern
+			
+		}
 	/**
 	 * Executes the batch processing.
 	 * Loads the data from their input port, and after processing it,
