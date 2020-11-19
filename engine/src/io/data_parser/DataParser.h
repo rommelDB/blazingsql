@@ -22,6 +22,8 @@ namespace io {
 
 class data_parser {
 public:
+	/*data_parser() = default;
+	virtual ~data_parser() = default;*/
 
 	virtual std::unique_ptr<ral::frame::BlazingTable> parse_batch(
 		ral::io::data_handle handle,

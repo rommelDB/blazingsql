@@ -235,6 +235,8 @@ void executor::execute(){
     }
 }
 
+executor * executor::_instance;
+
 } // namespace execution
 
 } // end namespace ral

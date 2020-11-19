@@ -14,10 +14,9 @@
 namespace ral {
 namespace io {
 
-//gdf_parser::gdf_parser() {}
+gdf_parser::gdf_parser() {}
 
-
-//gdf_parser::~gdf_parser() {}
+gdf_parser::~gdf_parser() {}
 
 std::unique_ptr<ral::frame::BlazingTable> gdf_parser::parse_batch(
 		ral::io::data_handle data_handle,
@@ -51,9 +50,10 @@ std::unique_ptr<ral::frame::BlazingTable> gdf_parser::parse_batch(
 	return std::make_unique<ral::frame::BlazingTable>(tableView, column_names_out);
 }
 
+size_t gdf_parser::get_num_partitions() {return 0;}
+
 void gdf_parser::parse_schema(
 	std::shared_ptr<arrow::io::RandomAccessFile> file, ral::io::Schema & schema) {}
-
 
 }  // namespace io
 }  // namespace ral
